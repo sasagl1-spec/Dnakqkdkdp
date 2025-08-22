@@ -1,6 +1,7 @@
 from .. import loader, utils
 import logging
 import asyncio
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -12,19 +13,56 @@ class AutoReactionsMod(loader.Module):
         "status_enabled": "✅ Автореакции включены для чата {}",
         "status_disabled": "❌ Автореакции отключены для чата {}",
         "already_enabled": "⚠️ Автореакции уже включены для этого чата",
-        "already_disabled": "⚠️ Автореакции уже отключены для этого чата",
+        "already_disabled": "⚠️ Автореакции уже отключены для этого чаat",
         "not_in_chat": "⚠️ Эта команда работает только в чатах",
         "stats": "📊 Статистика по чатам:\n{}",
-        "no_stats": "📊 Статистика отсутствует"
+        "no_stats": "📊 Статистика отсутствует",
+        "invalid_reaction": "❌ Недопустимая реакция: {}",
+        "emoji_only": "✅ Используются только эмодзи-реакции"
     }
 
     def __init__(self):
         self.message_count = {}
         self.enabled_chats = set()
-        self.reactions = ['🥵', '🥰', '❤️']
+        self.reactions = self._filter_emoji(['🥵', '🥰', '❤️'])
         self.config = loader.ModuleConfig(
             "REACTION_INTERVAL", 40, "Интервал сообщений для реакций"
         )
+
+    def _filter_emoji(self, reactions):
+        """Фильтрует только эмодзи-реакции"""
+        emoji_pattern = re.compile(
+            "["
+            "\U0001F600-\U0001F64F"  # emoticons
+            "\U0001F300-\U0001F5FF"  # symbols & pictographs
+            "\U0001F680-\U0001F6FF"  # transport & map symbols
+            "\U0001F1E0-\U0001F1FF"  # flags (iOS)
+            "\U00002500-\U00002BEF"  # chinese char
+            "\U00002702-\U000027B0"
+            "\U00002702-\U000027B0"
+            "\U000024C2-\U0001F251"
+            "\U0001f926-\U0001f937"
+            "\U00010000-\U0010ffff"
+            "\u2640-\u2642"
+            "\u2600-\u2B55"
+            "\u200d"
+            "\u23cf"
+            "\u23e9"
+            "\u231a"
+            "\ufe0f"  # dingbats
+            "\u3030"
+            "]+", 
+            flags=re.UNICODE
+        )
+        
+        valid_emoji = []
+        for reaction in reactions:
+            if emoji_pattern.fullmatch(reaction):
+                valid_emoji.append(reaction)
+            else:
+                logger.warning(f"Invalid reaction removed: {reaction}")
+        
+        return valid_emoji
 
     async def client_ready(self, client, db):
         self._client = client
@@ -36,20 +74,26 @@ class AutoReactionsMod(loader.Module):
         if not chat_id or chat_id not in self.enabled_chats:
             return
 
-        # Инициализация счетчика для чата
         if chat_id not in self.message_count:
             self.message_count[chat_id] = 0
         
         self.message_count[chat_id] += 1
 
-        # Проверяем каждое 40-е сообщение
         if self.message_count[chat_id] % self.config["REACTION_INTERVAL"] == 0:
             try:
                 for reaction in self.reactions:
-                    await message.react(reaction)
-                    await asyncio.sleep(0.5)
+                    # Дополнительная проверка перед отправкой
+                    if self._is_valid_emoji(reaction):
+                        await message.react(reaction)
+                        await asyncio.sleep(0.5)
+                    else:
+                        logger.warning(f"Skipping invalid reaction: {reaction}")
             except Exception as e:
                 logger.error(f"Ошибка установки реакций: {e}")
+
+    def _is_valid_emoji(self, text):
+        """Проверяет, является ли текст валидным эмодзи"""
+        return bool(re.match(r'^\p{Emoji}$', text, re.UNICODE))
 
     async def arstart_cmd(self, message):
         """Включить автореакции в текущем чате"""
@@ -104,3 +148,21 @@ class AutoReactionsMod(loader.Module):
         
         self.config["REACTION_INTERVAL"] = new_interval
         await utils.answer(message, f"✅ Интервал изменен на {new_interval} сообщений")
+
+    async def arsetreactions_cmd(self, message):
+        """Установить новые реакции: .arsetreactions 😂 🥺 👍"""
+        args = utils.get_args_raw(message)
+        if not args:
+            return await utils.answer(message, "❌ Укажите эмодзи через пробел")
+        
+        new_reactions = args.split()
+        filtered_reactions = self._filter_emoji(new_reactions)
+        
+        if not filtered_reactions:
+            return await utils.answer(message, "❌ Не найдено валидных эмодзи")
+        
+        self.reactions = filtered_reactions
+        await utils.answer(message, 
+            f"✅ Реакции обновлены: {''.join(filtered_reactions)}\n"
+            f"Количество: {len(filtered_reactions)}"
+        )
