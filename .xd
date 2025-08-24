@@ -1,0 +1,28 @@
+import requests
+from urllib.parse import urljoin
+
+class LoginModule:
+    def __init__(self, base_url):
+        self.base_url = base_url
+        self.session = requests.Session()
+    
+    def login(self, username, password, login_endpoint="/login"):
+        target_url = urljoin(self.base_url, login_endpoint)
+        
+        data = {
+            'username': username,
+            'password': password
+        }
+        
+        response = self.session.post(target_url, data=data)
+        
+        if response.status_code == 200 and "dashboard" in response.text:
+            print("[+] Успешный вход!")
+            return True
+        else:
+            print("[-] Ошибка входа.")
+            return False
+
+# Пример использования:
+# module = LoginModule("https://example.com")
+# module.login("test_user", "test_password")
