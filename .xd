@@ -2,11 +2,16 @@ import requests
 from urllib.parse import urljoin
 
 class LoginModule:
-    def __init__(self, base_url):
+    def __init__(self, base_url, timeout=10):
         self.base_url = base_url
         self.session = requests.Session()
+        self.timeout = timeout
+        # Добавляем стандартные заголовки
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        })
     
-    def login(self, username, password, login_endpoint="/login"):
+    def login(self, username, password, login_endpoint="/login", csrf_token=None):
         target_url = urljoin(self.base_url, login_endpoint)
         
         data = {
@@ -14,15 +19,67 @@ class LoginModule:
             'password': password
         }
         
-        response = self.session.post(target_url, data=data)
+        # Добавляем CSRF-токен если требуется
+        if csrf_token:
+            data['csrf_token'] = csrf_token
         
-        if response.status_code == 200 and "dashboard" in response.text:
-            print("[+] Успешный вход!")
-            return True
-        else:
-            print("[-] Ошибка входа.")
+        try:
+            # Получаем страницу логина для cookies/токенов
+            prelim_response = self.session.get(
+                target_url, 
+                timeout=self.timeout
+            )
+            
+            # Отправляем данные логина
+            response = self.session.post(
+                target_url, 
+                data=data,
+                timeout=self.timeout,
+                allow_redirects=True
+            )
+            
+            # Проверяем успешность по разным критериям
+            success_indicators = [
+                response.status_code == 200,
+                "dashboard" in response.text.lower(),
+                "welcome" in response.text.lower(),
+                "logout" in response.text.lower(),
+                response.history and 300 <= response.history[0].status_code < 400
+            ]
+            
+            if any(success_indicators):
+                print(f"[+] Успешный вход для пользователя {username}!")
+                print(f"[+] Сессия сохранена с {len(self.session.cookies)} cookies")
+                return True
+            else:
+                print(f"[-] Ошибка входа. Status: {response.status_code}")
+                return False
+                
+        except requests.exceptions.RequestException as e:
+            print(f"[-] Сетевая ошибка: {e}")
+            return False
+        except Exception as e:
+            print(f"[-] Неожиданная ошибка: {e}")
             return False
 
-# Пример использования:
-# module = LoginModule("https://example.com")
-# module.login("test_user", "test_password")
+    def get_session_cookies(self):
+        """Возвращает cookies сессии"""
+        return dict(self.session.cookies)
+
+    def test_authorized_access(self, test_endpoint="/profile"):
+        """Тестирует доступ к защищенной странице"""
+        try:
+            target_url = urljoin(self.base_url, test_endpoint)
+            response = self.session.get(target_url, timeout=self.timeout)
+            return response.status_code == 200
+        except:
+            return False
+
+# Пример использования для образовательного тестирования:
+if __name__ == "__main__":
+    # ТЕСТИРУЙТЕ ТОЛЬКО СВОИ СЕРВЕРЫ!
+    module = LoginModule("https://your-test-site.com")
+    
+    if module.login("your_username", "your_password"):
+        print("Доступ к профилю:", module.test_authorized_access())
+        print("Cookies сессии:", module.get_session_cookies())
