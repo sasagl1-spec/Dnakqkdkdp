@@ -1,60 +1,132 @@
 import requests
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
+import re
+import json
 
-class LoginModule:
-    def __init__(self, base_url, timeout=10):
+class AdvancedLoginModule:
+    def __init__(self, base_url, timeout=15, verify_ssl=True):
         self.base_url = base_url
         self.session = requests.Session()
         self.timeout = timeout
-        # Добавляем стандартные заголовки
+        self.verify_ssl = verify_ssl
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
         })
     
-    def login(self, username, password, login_endpoint="/login", csrf_token=None):
+    def extract_csrf_token(self, html_content):
+        """Извлекает CSRF токен из HTML"""
+        patterns = [
+            r'<input[^>]*name="csrf_token"[^>]*value="([^"]+)"',
+            r'<meta[^>]*name="csrf-token"[^>]*content="([^"]+)"',
+            r'<input[^>]*name="_token"[^>]*value="([^"]+)"',
+            r'<input[^>]*name="authenticity_token"[^>]*value="([^"]+)"',
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, html_content, re.IGNORECASE)
+            if match:
+                return match.group(1)
+        return None
+
+    def extract_hidden_fields(self, html_content):
+        """Извлекает все скрытые поля формы"""
+        hidden_fields = {}
+        pattern = r'<input[^>]*type="hidden"[^>]*name="([^"]+)"[^>]*value="([^"]+)"'
+        matches = re.findall(pattern, html_content, re.IGNORECASE)
+        for name, value in matches:
+            hidden_fields[name] = value
+        return hidden_fields
+
+    def login(self, username, password, login_endpoint="/login"):
         target_url = urljoin(self.base_url, login_endpoint)
         
-        data = {
-            'username': username,
-            'password': password
-        }
-        
-        # Добавляем CSRF-токен если требуется
-        if csrf_token:
-            data['csrf_token'] = csrf_token
-        
         try:
-            # Получаем страницу логина для cookies/токенов
+            # Первый запрос для получения cookies и токенов
             prelim_response = self.session.get(
-                target_url, 
-                timeout=self.timeout
-            )
-            
-            # Отправляем данные логина
-            response = self.session.post(
-                target_url, 
-                data=data,
+                target_url,
                 timeout=self.timeout,
-                allow_redirects=True
+                verify=self.verify_ssl
             )
             
-            # Проверяем успешность по разным критериям
-            success_indicators = [
-                response.status_code == 200,
-                "dashboard" in response.text.lower(),
-                "welcome" in response.text.lower(),
-                "logout" in response.text.lower(),
-                response.history and 300 <= response.history[0].status_code < 400
-            ]
+            if prelim_response.status_code != 200:
+                print(f"[-] Не удалось получить страницу логина: {prelim_response.status_code}")
+                return False
+
+            # Извлекаем CSRF токен и скрытые поля
+            csrf_token = self.extract_csrf_token(prelim_response.text)
+            hidden_fields = self.extract_hidden_fields(prelim_response.text)
             
+            # Формируем данные для отправки
+            data = {
+                'username': username,
+                'password': password,
+                **hidden_fields  # Добавляем все скрытые поля
+            }
+            
+            if csrf_token:
+                data['csrf_token'] = csrf_token
+                data['_token'] = csrf_token  # Для Laravel и других фреймворков
+
+            # Определяем Content-Type на основе ответа
+            headers = {
+                'Referer': target_url,
+                'Origin': f"{urlparse(self.base_url).scheme}://{urlparse(self.base_url).netloc}",
+            }
+
+            # Проверяем, ожидает ли сервер JSON
+            if 'application/json' in prelim_response.headers.get('Content-Type', ''):
+                headers['Content-Type'] = 'application/json'
+                response = self.session.post(
+                    target_url,
+                    json=data,
+                    timeout=self.timeout,
+                    allow_redirects=True,
+                    verify=self.verify_ssl,
+                    headers=headers
+                )
+            else:
+                headers['Content-Type'] = 'application/x-www-form-urlencoded'
+                response = self.session.post(
+                    target_url,
+                    data=data,
+                    timeout=self.timeout,
+                    allow_redirects=True,
+                    verify=self.verify_ssl,
+                    headers=headers
+                )
+
+            # Расширенные проверки успешного входа
+            success_indicators = [
+                response.status_code in [200, 302],
+                any(indicator in response.text.lower() for indicator in [
+                    'dashboard', 'welcome', 'logout', 'profile',
+                    'success', 'redirecting', 'my account'
+                ]),
+                any(cookie.name.lower() in ['sessionid', 'auth_token', 'jwt'] 
+                    for cookie in self.session.cookies),
+                len(response.history) > 0,  # Были редиректы
+                'set-cookie' in response.headers,
+            ]
+
             if any(success_indicators):
                 print(f"[+] Успешный вход для пользователя {username}!")
-                print(f"[+] Сессия сохранена с {len(self.session.cookies)} cookies")
+                print(f"[+] Код статуса: {response.status_code}")
+                print(f"[+] Cookies: {len(self.session.cookies)}")
+                print(f"[+] Final URL: {response.url}")
                 return True
             else:
                 print(f"[-] Ошибка входа. Status: {response.status_code}")
+                print(f"[-] Response text: {response.text[:200]}...")
                 return False
-                
+
+        except requests.exceptions.SSLError:
+            print("[-] Ошибка SSL. Попробуйте с verify_ssl=False")
+            return False
         except requests.exceptions.RequestException as e:
             print(f"[-] Сетевая ошибка: {e}")
             return False
@@ -62,24 +134,49 @@ class LoginModule:
             print(f"[-] Неожиданная ошибка: {e}")
             return False
 
-    def get_session_cookies(self):
-        """Возвращает cookies сессии"""
-        return dict(self.session.cookies)
+    def get_session_info(self):
+        """Возвращает информацию о сессии"""
+        return {
+            'cookies': dict(self.session.cookies),
+            'headers': dict(self.session.headers),
+            'cookies_count': len(self.session.cookies)
+        }
 
     def test_authorized_access(self, test_endpoint="/profile"):
         """Тестирует доступ к защищенной странице"""
         try:
             target_url = urljoin(self.base_url, test_endpoint)
-            response = self.session.get(target_url, timeout=self.timeout)
-            return response.status_code == 200
-        except:
+            response = self.session.get(
+                target_url, 
+                timeout=self.timeout,
+                verify=self.verify_ssl
+            )
+            
+            # Проверяем различные признаки успешного доступа
+            access_indicators = [
+                response.status_code == 200,
+                'login' not in response.text.lower(),
+                'authenticate' not in response.text.lower(),
+                not response.url.endswith('/login')
+            ]
+            
+            return all(access_indicators)
+            
+        except Exception as e:
+            print(f"[-] Ошибка тестирования доступа: {e}")
             return False
 
-# Пример использования для образовательного тестирования:
+# Пример использования ДЛЯ ОБРАЗОВАТЕЛЬНЫХ ЦЕЛЕЙ:
 if __name__ == "__main__":
-    # ТЕСТИРУЙТЕ ТОЛЬКО СВОИ СЕРВЕРЫ!
-    module = LoginModule("https://your-test-site.com")
+    # ⚠️ ТЕСТИРУЙТЕ ТОЛЬКО СВОИ СЕРВЕРЫ ИЛИ С РАЗРЕШЕНИЯ!
+    module = AdvancedLoginModule(
+        "https://test-site.com",
+        timeout=15,
+        verify_ssl=True  # Отключите если самоподписанный сертификат
+    )
     
-    if module.login("your_username", "your_password"):
-        print("Доступ к профилю:", module.test_authorized_access())
-        print("Cookies сессии:", module.get_session_cookies())
+    if module.login("test_user", "test_password"):
+        print("✓ Доступ к защищенной странице:", module.test_authorized_access())
+        print("✓ Информация о сессии:", module.get_session_info())
+    else:
+        print("✗ Не удалось войти в систему")
