@@ -1,0 +1,284 @@
+from hikka import loader, utils
+from telethon.tl.types import Message
+import random
+import time
+import re
+
+@loader.tds
+class SelectiveRPMod(loader.Module):
+    """РП модуль с выбором чатов и пользовательскими триггерами"""
+    
+    strings = {"name": "SelectiveRPMod"}
+    
+    def __init__(self):
+        self.commands = {
+            # === ОСНОВНЫЕ РП ДЕЙСТВИЯ ===
+            "дать пять": ["✋ {sender} дает пять {target}", "🖐️ {sender} дает пяточку {target}"],
+            "записать на ноготочки": ["💅 {sender} записывает {target} на ноготочки", "✨ {sender} записал на маникюр {target}"],
+            "маникюр": ["💅 {sender} делает маникюр {target}", "🌸 {sender} красит ногти {target}"],
+            "испугать": ["😱 {sender} пугает {target}", "👻 {sender} напугал {target}"],
+            "напугать": ["😨 {sender} пугает {target}", "💀 {sender} страшно пугает {target}"],
+            "извиниться": ["🙏 {sender} извиняется перед {target}", "😔 {sender} просит прощения у {target}"],
+            "прости": ["🥺 {sender} просит прощения у {target}", "🙇 {sender} извиняется перед {target}"],
+            "кусь": ["😈 {sender} кусает {target}", "🦷 {sender} больно кусает {target}"],
+            "куснуть": ["🐺 {sender} кусает {target}", "😬 {sender} кусает за ухо {target}"],
+            "лизнуть": ["👅 {sender} лижет {target}", "😛 {sender} облизывает {target}"],
+            "лизь": ["😋 {sender} лижет {target}", "👅 {sender} проводит языком по {target}"],
+            "облизать": ["🤤 {sender} облизывает {target}", "👅 {sender} полностью облизывает {target}"],
+            "обнять": ["💞 {sender} обнимает {target}", "🤗 {sender} крепко обнимает {target}"],
+            "обнимать": ["🫂 {sender} обнимает {target}", "💕 {sender} нежно обнимает {target}"],
+            "поздравить": ["🎉 {sender} поздравляет {target}", "🥳 {sender} поздравляет с праздником {target}"],
+            "поздравляю": ["🎊 {sender} поздравляет {target}", "🎁 {sender} говорит поздравления {target}"],
+            "поцеловать": ["😘 {sender} целует {target}", "💋 {sender} нежно целует {target}"],
+            "целовать": ["😚 {sender} целует {target}", "❤️ {sender} страстно целует {target}"],
+            "прижать": ["🤗 {sender} прижимает {target}", "💞 {sender} крепко прижимает {target}"],
+            "прижал": ["🏋️ {sender} прижимает к стене {target}", "💪 {sender} сильно прижимает {target}"],
+            "потрогать": ["✋ {sender} трогает {target}", "👐 {sender} нежно трогает {target}"],
+            "трогать": ["🤲 {sender} трогает {target}", "✋ {sender} проводит рукой по {target}"],
+            "пожать руку": ["🤝 {sender} пожимает руку {target}", "🙌 {sender} жмет руку {target}"],
+            "рукопожатие": ["👏 {sender} жмет руку {target}", "🤝 {sender} предлагает рукопожатие {target}"],
+            "послать нахуй": ["🖕 {sender} посылает нахуй {target}", "👊 {sender} отправляет нахуй {target}"],
+            "послал": ["🚀 {sender} посылает {target} нахуй", "🖕 {sender} показывает фак {target}"],
+            "похвалить": ["🌟 {sender} хвалит {target}", "👏 {sender} восхищается {target}"],
+            "хвалить": ["🏆 {sender} хвалит {target}", "⭐ {sender} говорит комплименты {target}"],
+            "понюхать": ["👃 {sender} нюхает {target}", "🌬️ {sender} вдыхает аромат {target}"],
+            "нюхать": ["🌹 {sender} нюхает {target}", "👃 {sender} наслаждается запахом {target}"],
+            "погладить": ["🐾 {sender} гладит {target}", "✨ {sender} нежно гладит {target}"],
+            "гладить": ["🤲 {sender} гладит {target}", "💫 {sender} ласкает {target}"],
+            "пригласить на чаёк": ["🍵 {sender} приглашает {target} на чаек", "☕ {sender} зовет на чай {target}"],
+            "пригласить на чай": ["🫖 {sender} зовет на чай {target}", "🍵 {sender} приглашает чаевничать {target}"],
+            "чай": ["☕ {sender} предлагает чай {target}", "🍵 {sender} угощает чаем {target}"],
+            "пнуть": ["👞 {sender} пинает {target}", "🦵 {sender} бьет ногой {target}"],
+            "пинать": ["⚽ {sender} пинает {target}", "👢 {sender} пинает ногой {target}"],
+            "покормить": ["🍎 {sender} кормит {target}", "🍕 {sender} угощает {target}"],
+            "кормить": ["🍽️ {sender} кормит {target}", "🥘 {sender} предлагает еду {target}"],
+            "ущипнуть": ["🤏 {sender} щипает {target}", "✌️ {sender} больно щипает {target}"],
+            "щипать": ["🦀 {sender} щипает {target}", "✂️ {sender} больно щипает {target}"],
+            "ударить": ["🥊 {sender} ударяет {target}", "💥 {sender} бьет со всей силы {target}"],
+            "шлёпнуть": ["👋 {sender} шлепает {target}", "🍑 {sender} шлепает по попе {target}"],
+            "шлепнуть": ["✋ {sender} шлепает {target}", "👋 {sender} дает подзатыльник {target}"],
+
+            # === ДЛЯ ВЛЮБЛЁННЫХ ===
+            "сделать подарок": ["🎁 {sender} дарит подарок {target}", "🎀 {sender} преподносит подарок {target}"],
+            "подарить": ["🎁 {sender} дарит {target}", "💝 {sender} делает подарок {target}"],
+            "устроить сюрприз": ["🎉 {sender} устраивает сюрприз для {target}", "🎊 {sender} готовит сюрприз {target}"],
+            "сюрприз": ["🎁 {sender} готовит сюрприз {target}", "🎪 {sender} устраивает неожиданность {target}"],
+            "пригласить в клуб": ["🎵 {sender} зовет в клуб {target}", "🎶 {sender} приглашает на танцы {target}"],
+            "клуб": ["🕺 {sender} зовет в клуб {target}", "💃 {sender} приглашает потанцевать {target}"],
+            "поговорить по душам": ["💬 {sender} говорит по душам с {target}", "❤️ {sender} открывает душу {target}"],
+            "душевный разговор": ["🗣️ {sender} ведет душевный разговор с {target}", "💭 {sender} делится сокровенным {target}"],
+            "сходить в кино": ["🎬 {sender} идет в кино с {target}", "🍿 {sender} приглашает в кинотеатр {target}"],
+            "кино": ["📽️ {sender} предлагает сходить в кино с {target}", "🎞️ {sender} зовет на фильм {target}"],
+            "подарить конфеты": ["🍬 {sender} дарит конфеты {target}", "🍫 {sender} угощает сладостями {target}"],
+            "конфеты": ["🍭 {sender} дарит конфеты {target}", "🍬 {sender} угощает вкусняшками {target}"],
+            "сделать завтрак": ["🍳 {sender} готовит завтрак для {target}", "🥞 {sender} кормит завтраком {target}"],
+            "завтрак": ["☕ {sender} готовит завтрак {target}", "🍳 {sender} угощает утренней едой {target}"],
+            "пригласить погулять": ["🚶 {sender} зовет на прогулку {target}", "🌳 {sender} приглашает погулять {target}"],
+            "прогулка": ["🌄 {sender} предлагает прогулку {target}", "🚶‍♂️ {sender} зовет пройтись {target}"],
+            "подарить шоколадку": ["🍫 {sender} дарит шоколадку {target}", "🎂 {sender} угощает шоколадом {target}"],
+            "шоколад": ["🍫 {sender} дарит шоколад {target}", "🍫 {sender} угощает сладким {target}"],
+            "кинуть мем": ["📱 {sender} кидает мем {target}", "😆 {sender} отправляет смешной мем {target}"],
+            "мем": ["😂 {sender} отправляет мем {target}", "📲 {sender} делится мемом с {target}"],
+            "поделиться едой": ["🍕 {sender} делится едой с {target}", "🍔 {sender} угощает {target}"],
+            "угостить": ["🍎 {sender} угощает {target}", "🍖 {sender} делится едой с {target}"],
+            "рассказать анекдот": ["🎭 {sender} рассказывает анекдот {target}", "😂 {sender} смешит анекдотом {target}"],
+            "анекдот": ["📜 {sender} рассказывает анекдот {target}", "😄 {sender} веселит шуткой {target}"],
+            "сделать комплимент": ["🌹 {sender} делает комплимент {target}", "💐 {sender} хвалит {target}"],
+            "комплимент": ["🌟 {sender} делает комплимент {target}", "✨ {sender} говорит приятное {target}"],
+        }
+        self.cooldowns = {}
+        self.enabled_chats = set()
+        self.custom_triggers = {}
+        
+    async def client_ready(self, client, db):
+        self._db = db
+        self._client = client
+        self.settings = self._db.get("SelectiveRPMod", "settings", {
+            "cooldown": 3,
+            "enabled": True
+        })
+        self.enabled_chats = set(self._db.get("SelectiveRPMod", "enabled_chats", []))
+        self.custom_triggers = self._db.get("SelectiveRPMod", "custom_triggers", {})
+    
+    async def rpaddchatcmd(self, message: Message):
+        """Добавить чат в разрешенные: .rpaddchat"""
+        chat_id = message.chat_id
+        if chat_id in self.enabled_chats:
+            await message.edit("✅ Этот чат уже в списке разрешенных")
+            return
+        
+        self.enabled_chats.add(chat_id)
+        self._db.set("SelectiveRPMod", "enabled_chats", list(self.enabled_chats))
+        await message.edit("✅ Чат добавлен в разрешенные для РП команд")
+
+    async def rpremovechatcmd(self, message: Message):
+        """Удалить чат из разрешенных: .rpremovechat"""
+        chat_id = message.chat_id
+        if chat_id not in self.enabled_chats:
+            await message.edit("❌ Этот чат не в списке разрешенных")
+            return
+        
+        self.enabled_chats.remove(chat_id)
+        self._db.set("SelectiveRPMod", "enabled_chats", list(self.enabled_chats))
+        await message.edit("✅ Чат удален из разрешенных")
+
+    async def rplistchatscmd(self, message: Message):
+        """Список разрешенных чатов: .rplistchats"""
+        if not self.enabled_chats:
+            await message.edit("📋 Список разрешенных чатов пуст")
+            return
+        
+        response = "📋 Разрешенные чаты для РП:\n\n"
+        for chat_id in self.enabled_chats:
+            try:
+                chat = await self._client.get_entity(chat_id)
+                title = getattr(chat, 'title', f'Чат {chat_id}')
+                response += f"• {title} (ID: {chat_id})\n"
+            except:
+                response += f"• Unknown chat (ID: {chat_id})\n"
+        
+        await message.edit(response)
+
+    async def rpaddtriggercmd(self, message: Message):
+        """Добавить пользовательский триггер: .rpaddtrigger <триггер> | <ответ1> | <ответ2> | ..."""
+        args = utils.get_args_raw(message)
+        if not args or "|" not in args:
+            await message.edit(
+                "❌ Неправильный формат!\n"
+                "Пример: .rpaddtrigger привет | 👋 {sender} приветствует {target} | 🎉 {sender} рад видеть {target}"
+            )
+            return
+        
+        parts = [part.strip() for part in args.split("|")]
+        trigger = parts[0].lower()
+        responses = parts[1:]
+        
+        if not trigger or not responses:
+            await message.edit("❌ Триггер и ответы не могут быть пустыми!")
+            return
+        
+        self.custom_triggers[trigger] = responses
+        self._db.set("SelectiveRPMod", "custom_triggers", self.custom_triggers)
+        await message.edit(f"✅ Триггер '{trigger}' добавлен с {len(responses)} ответами")
+
+    async def rpremovetriggercmd(self, message: Message):
+        """Удалить пользовательский триггер: .rpremovetrigger <триггер>"""
+        trigger = utils.get_args_raw(message).lower()
+        if not trigger:
+            await message.edit("❌ Укажите триггер для удаления")
+            return
+        
+        if trigger not in self.custom_triggers:
+            await message.edit("❌ Такого триггера не существует")
+            return
+        
+        del self.custom_triggers[trigger]
+        self._db.set("SelectiveRPMod", "custom_triggers", self.custom_triggers)
+        await message.edit(f"✅ Триггер '{trigger}' удален")
+
+    async def rplisttriggerscmd(self, message: Message):
+        """Список пользовательских триггеров: .rplisttriggers"""
+        if not self.custom_triggers:
+            await message.edit("📋 Пользовательские триггеры отсутствуют")
+            return
+        
+        response = "📋 Пользовательские триггеры:\n\n"
+        for trigger, responses in self.custom_triggers.items():
+            response += f"• {trigger}: {len(responses)} ответов\n"
+        
+        await message.edit(response)
+
+    async def watcher(self, message: Message):
+        """Обработчик сообщений только в разрешенных чатах"""
+        if not self.settings["enabled"] or not message.text or message.out:
+            return
+        
+        # Проверяем разрешен ли чат
+        chat_id = message.chat_id
+        if chat_id not in self.enabled_chats:
+            return
+        
+        current_time = time.time()
+        user_id = message.sender_id
+        
+        # Проверка кулдауна
+        if user_id in self.cooldowns and current_time - self.cooldowns[user_id] < self.settings["cooldown"]:
+            return
+        
+        text = message.text.lower().strip()
+        
+        # Проверяем стандартные команды
+        if text in self.commands:
+            response = random.choice(self.commands[text])
+        # Проверяем пользовательские триггеры
+        elif text in self.custom_triggers:
+            response = random.choice(self.custom_triggers[text])
+        else:
+            return
+        
+        # Замена плейсхолдеров
+        sender_name = await self.get_user_name(user_id)
+        
+        # Если есть reply, используем его как target
+        if message.is_reply:
+            try:
+                reply = await message.get_reply_message()
+                target_user = await self._client.get_entity(reply.sender_id)
+                target_name = target_user.first_name or f"user_{reply.sender_id}"
+            except:
+                target_name = "всех"
+        else:
+            target_name = "всех"
+        
+        response = response.format(sender=sender_name, target=target_name)
+        await message.reply(response)
+        self.cooldowns[user_id] = current_time
+    
+    async def get_user_name(self, user_id: int):
+        """Получение имени пользователя"""
+        try:
+            user = await self._client.get_entity(user_id)
+            return user.first_name or f"user_{user_id}"
+        except:
+            return f"user_{user_id}"
+    
+    async def rpcmd(self, message: Message):
+        """Список команд: .rp"""
+        categories = {
+            "Основные РП": list(self.commands.keys())[:30],
+            "Для влюбленных": list(self.commands.keys())[30:]
+        }
+        
+        response = "🎭 Категории РП команд:\n\n"
+        for category, commands in categories.items():
+            response += f"🔹 {category}: {len(commands)} команд\n"
+        
+        response += f"\n📝 Просто напиши команду в чат\n"
+        response += f"⏱️ Кулдаун: {self.settings['cooldown']}сек\n"
+        response += f"🔢 Всего команд: {len(self.commands)}\n"
+        response += f"🎯 Пользовательских триггеров: {len(self.custom_triggers)}\n\n"
+        response += "🔧 Команды управления:\n"
+        response += "• .rpaddchat - добавить чат\n"
+        response += "• .rpremovechat - удалить чат\n"
+        response += "• .rplistchats - список чатов\n"
+        response += "• .rpaddtrigger - добавить триггер\n"
+        response += "• .rpremovetrigger - удалить триггер\n"
+        response += "• .rplisttriggers - список триггеров\n"
+        response += "• .rptoggle on/off - вкл/выкл модуль"
+        
+        await message.edit(response)
+    
+    async def rptogglecmd(self, message: Message):
+        """Включить/выключить: .rptoggle <on/off>"""
+        args = utils.get_args_raw(message).lower()
+        if args == "on":
+            self.settings["enabled"] = True
+            await message.edit("✅ РП команды включены")
+        elif args == "off":
+            self.settings["enabled"] = False
+            await message.edit("❌ РП команды выключены")
+        else:
+            status = "включены" if self.settings["enabled"] else "выключены"
+            await message.edit(f"📊 РП команды: {status}\nИспользуй: .rptoggle on/off")
+        
+        self._db.set("SelectiveRPMod", "settings", self.settings)
