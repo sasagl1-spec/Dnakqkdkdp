@@ -1,319 +1,208 @@
 # meta developer: @kiminaiq
-# meta pic: 
-# meta description: Модуль автоматической пересылки сообщений
+# meta pic: https://img.icons8.com/color/48/000000/forward-message.png
+# meta description: Пересылка сообщений с задержкой и повторами
 # scope: hikka_only
 # scope: hikka_min 1.6.0
 
-import asyncio
-import time
-from datetime import datetime
 from .. import loader, utils
+import asyncio
 import logging
+from telethon.tl.types import Message
 
 logger = logging.getLogger(__name__)
 
 @loader.tds
-class AutoForwardMod(loader.Module):
-    """Модуль автоматической пересылки сообщений"""
+class ForwardDelayMod(loader.Module):
+    """Модуль пересылки сообщений с задержкой"""
     
     strings = {
-        "name": "AutoForwardMod",
-        "config_task": "Задача пересылки",
-        "config_enabled": "Включена",
-        "task_created": "✅ Задача пересылки создана!\n\nДетали:\nЧат: {}\nКоманда: {}\nИнтервал: {} сек\nКоличество: {}\n\nИспользуйте .forwardtasks для просмотра задач",
-        "task_not_found": "❌ Задача с ID {} не найдена",
-        "task_stopped": "⏹️ Задача {} остановлена",
-        "task_already_running": "⚠️ Задача {} уже выполняется",
-        "task_started": "▶️ Задача {} запущена",
-        "no_tasks": "📭 Нет активных задач",
-        "task_removed": "🗑️ Задача {} удалена",
-        "invalid_args": "❌ Неверные аргументы. Формат: .setforward <команда> <интервал_сек> <количество>",
-        "forwarding": "🔄 Пересылка {}/{}",
-        "task_completed": "✅ Задача {} завершена",
-        "test_forward": "🔄 Тестовое сообщение отправлено"
+        "name": "ForwardDelay",
+        "no_reply": "🚫 <b>Ответь на сообщение для пересылки</b>",
+        "invalid_args": "🚫 <b>Неверные аргументы</b>\n<code>.setforward &lt;задержка&gt; &lt;количество&gt;</code>",
+        "task_started": "✅ <b>Задача запущена!</b>\n📤 Пересылаю <b>{count}</b> раз\n⏱ Задержка: <b>{delay} сек</b>",
+        "task_running": "⚠️ <b>Уже есть активная задача</b>\nИспользуй <code>.stopforward</code> для отмены",
+        "task_stopped": "⏹️ <b>Пересылка остановлена</b>",
+        "no_task": "📭 <b>Нет активных задач</b>",
+        "progress": "🔄 <b>Прогресс:</b> {current}/{total}",
+        "complete": "✅ <b>Пересылка завершена!</b>",
     }
     
     strings_ru = {
-        "config_task": "Задача пересылки",
-        "config_enabled": "Включена",
-        "task_created": "✅ Задача пересылки создана!\n\nДетали:\nЧат: {}\nКоманда: {}\nИнтервал: {} сек\nКоличество: {}\n\nИспользуйте .forwardtasks для просмотра задач",
-        "task_not_found": "❌ Задача с ID {} не найдена",
-        "task_stopped": "⏹️ Задача {} остановлена",
-        "task_already_running": "⚠️ Задача {} уже выполняется",
-        "task_started": "▶️ Задача {} запущена",
-        "no_tasks": "📭 Нет активных задач",
-        "task_removed": "🗑️ Задача {} удалена",
-        "invalid_args": "❌ Неверные аргументы. Формат: .setforward <команда> <интервал_сек> <количество>",
-        "forwarding": "🔄 Пересылка {}/{}",
-        "task_completed": "✅ Задача {} завершена",
-        "test_forward": "🔄 Тестовое сообщение отправлено"
+        "no_reply": "🚫 <b>Ответь на сообщение для пересылки</b>",
+        "invalid_args": "🚫 <b>Неверные аргументы</b>\n<code>.setforward &lt;задержка&gt; &lt;количество&gt;</code>",
+        "task_started": "✅ <b>Задача запущена!</b>\n📤 Пересылаю <b>{count}</b> раз\n⏱ Задержка: <b>{delay} сек</b>",
+        "task_running": "⚠️ <b>Уже есть активная задача</b>\nИспользуй <code>.stopforward</code> для отмены",
+        "task_stopped": "⏹️ <b>Пересылка остановлена</b>",
+        "no_task": "📭 <b>Нет активных задач</b>",
+        "progress": "🔄 <b>Прогресс:</b> {current}/{total}",
+        "complete": "✅ <b>Пересылка завершена!</b>",
     }
     
     def __init__(self):
         self.config = loader.ModuleConfig(
             loader.ConfigValue(
-                "auto_save",
-                True,
-                lambda: self.strings("config_enabled"),
-                validator=loader.validators.Boolean()
+                "default_delay",
+                1.0,
+                "Задержка по умолчанию (сек)",
+                validator=loader.validators.Float(minimum=0.1, maximum=300)
+            ),
+            loader.ConfigValue(
+                "max_count",
+                50,
+                "Максимальное количество повторений",
+                validator=loader.validators.Integer(minimum=1, maximum=1000)
             )
         )
-        self.tasks = {}
-        self.task_counter = 0
-        self.active_tasks = {}
+        self.task = None
+        self.is_running = False
+        self.current_progress = None
     
     async def client_ready(self, client, db):
         self.client = client
         self.db = db
-        self._db = db
-        logger.info("AutoForwardMod загружен")
+        self._client = client
+        logger.info("ForwardDelay загружен")
     
-    @loader.command(ru_doc="Установить задачу пересылки - .setforward <команда> <интервал> <количество>")
-    async def setforwardcmd(self, message):
-        """<команда> <интервал_сек> <количество> - установить задачу пересылки"""
+    @loader.command(
+        ru_doc="<задержка> <количество> - Переслать сообщение с задержкой",
+        en_doc="<delay> <count> - Forward message with delay"
+    )
+    async def setforwardcmd(self, message: Message):
+        """Переслать сообщение с задержкой"""
+        # Проверка реплая
+        reply = await message.get_reply_message()
+        if not reply:
+            await utils.answer(message, self.strings("no_reply"))
+            return
+        
+        # Проверка активной задачи
+        if self.is_running:
+            await utils.answer(message, self.strings("task_running"))
+            return
+        
+        # Парсинг аргументов
         args = utils.get_args(message)
         
-        if len(args) < 3:
-            await utils.answer(message, self.strings("invalid_args"))
-            return
+        # Используем аргументы или значения по умолчанию
+        if len(args) >= 2:
+            try:
+                delay = float(args[0])
+                count = int(args[1])
+            except ValueError:
+                await utils.answer(message, self.strings("invalid_args"))
+                return
+        else:
+            delay = self.config["default_delay"]
+            count = 1
         
-        command = args[0]
-        try:
-            interval = int(args[1])
-            count = int(args[2])
-        except ValueError:
-            await utils.answer(message, self.strings("invalid_args"))
-            return
+        # Валидация
+        if delay < 0.1:
+            delay = 0.1
+        if delay > 300:
+            delay = 300
         
-        if interval < 1 or count < 1:
-            await utils.answer(message, "❌ Интервал и количество должны быть больше 0")
-            return
+        if count > self.config["max_count"]:
+            count = self.config["max_count"]
         
+        # Получаем чат
         chat = await message.get_chat()
         chat_id = chat.id
-        chat_title = chat.title if hasattr(chat, 'title') else f"ID: {chat_id}"
         
-        task_id = self.task_counter
-        self.task_counter += 1
-        
-        task_data = {
-            "id": task_id,
-            "chat_id": chat_id,
-            "chat_title": chat_title,
-            "command": command,
-            "interval": interval,
-            "count": count,
-            "original_message": message.id,
-            "created": time.time(),
-            "running": False,
-            "completed": 0
-        }
-        
-        self.tasks[task_id] = task_data
-        self._save_tasks()
+        # Запуск задачи
+        self.is_running = True
+        self.task = asyncio.create_task(
+            self._forward_task(message, reply, chat_id, delay, count)
+        )
         
         await utils.answer(
             message,
-            self.strings("task_created").format(
-                chat_title, command, interval, count
+            self.strings("task_started").format(
+                delay=delay,
+                count=count
             )
         )
     
-    @loader.command(ru_doc="Запустить задачу пересылки")
-    async def startforwardcmd(self, message):
-        """<id_задачи> - запустить задачу"""
-        args = utils.get_args(message)
-        
-        if not args:
-            await utils.answer(message, "❌ Укажите ID задачи")
+    @loader.command(
+        ru_doc="Остановить текущую пересылку",
+        en_doc="Stop current forwarding"
+    )
+    async def stopforwardcmd(self, message: Message):
+        """Остановить пересылку"""
+        if not self.is_running:
+            await utils.answer(message, self.strings("no_task"))
             return
         
-        try:
-            task_id = int(args[0])
-        except ValueError:
-            await utils.answer(message, "❌ Неверный ID задачи")
-            return
+        if self.task:
+            self.task.cancel()
+            self.task = None
         
-        if task_id not in self.tasks:
-            await utils.answer(message, self.strings("task_not_found").format(task_id))
-            return
-        
-        task = self.tasks[task_id]
-        
-        if task["running"]:
-            await utils.answer(message, self.strings("task_already_running").format(task_id))
-            return
-        
-        task["running"] = True
-        self._save_tasks()
-        
-        # Запускаем асинхронную задачу
-        asyncio.create_task(self._forward_task(task_id))
-        
-        await utils.answer(message, self.strings("task_started").format(task_id))
+        self.is_running = False
+        await utils.answer(message, self.strings("task_stopped"))
     
-    @loader.command(ru_doc="Остановить задачу")
-    async def stopforwardcmd(self, message):
-        """<id_задачи> - остановить задачу"""
-        args = utils.get_args(message)
-        
-        if not args:
-            await utils.answer(message, "❌ Укажите ID задачи")
+    @loader.command(
+        ru_doc="Статус пересылки",
+        en_doc="Forwarding status"
+    )
+    async def forwardstatuscmd(self, message: Message):
+        """Статус пересылки"""
+        if not self.is_running:
+            await utils.answer(message, self.strings("no_task"))
             return
         
-        try:
-            task_id = int(args[0])
-        except ValueError:
-            await utils.answer(message, "❌ Неверный ID задачи")
-            return
-        
-        if task_id not in self.tasks:
-            await utils.answer(message, self.strings("task_not_found").format(task_id))
-            return
-        
-        task = self.tasks[task_id]
-        task["running"] = False
-        
-        if task_id in self.active_tasks:
-            self.active_tasks[task_id].cancel()
-            del self.active_tasks[task_id]
-        
-        self._save_tasks()
-        await utils.answer(message, self.strings("task_stopped").format(task_id))
-    
-    @loader.command(ru_doc="Показать все задачи")
-    async def forwardtaskscmd(self, message):
-        """- показать все задачи пересылки"""
-        if not self.tasks:
-            await utils.answer(message, self.strings("no_tasks"))
-            return
-        
-        text = "📋 **Активные задачи пересылки:**\n\n"
-        
-        for task_id, task in self.tasks.items():
-            status = "🟢 Запущена" if task["running"] else "🔴 Остановлена"
-            created = datetime.fromtimestamp(task["created"]).strftime("%d.%m.%Y %H:%M")
-            
-            text += (
-                f"**ID:** {task_id}\n"
-                f"**Чат:** {task['chat_title']}\n"
-                f"**Команда:** `{task['command']}`\n"
-                f"**Интервал:** {task['interval']} сек\n"
-                f"**Количество:** {task['count']}\n"
-                f"**Выполнено:** {task['completed']}/{task['count']}\n"
-                f"**Статус:** {status}\n"
-                f"**Создана:** {created}\n"
-                f"{'-'*30}\n"
+        if self.current_progress:
+            await utils.answer(
+                message,
+                self.strings("progress").format(
+                    current=self.current_progress[0],
+                    total=self.current_progress[1]
+                )
             )
-        
-        text += f"\n**Всего задач:** {len(self.tasks)}"
-        await utils.answer(message, text)
+        else:
+            await utils.answer(message, "🔄 <b>Задача выполняется</b>")
     
-    @loader.command(ru_doc="Удалить задачу")
-    async def delforwardcmd(self, message):
-        """<id_задачи> - удалить задачу"""
-        args = utils.get_args(message)
-        
-        if not args:
-            await utils.answer(message, "❌ Укажите ID задачи")
-            return
-        
+    async def _forward_task(self, message: Message, reply_msg: Message, chat_id: int, delay: float, count: int):
+        """Асинхронная задача пересылки"""
         try:
-            task_id = int(args[0])
-        except ValueError:
-            await utils.answer(message, "❌ Неверный ID задачи")
-            return
-        
-        if task_id not in self.tasks:
-            await utils.answer(message, self.strings("task_not_found").format(task_id))
-            return
-        
-        # Останавливаем задачу если она запущена
-        if task_id in self.active_tasks:
-            self.active_tasks[task_id].cancel()
-            del self.active_tasks[task_id]
-        
-        del self.tasks[task_id]
-        self._save_tasks()
-        
-        await utils.answer(message, self.strings("task_removed").format(task_id))
-    
-    @loader.command(ru_doc="Тестовая пересылка")
-    async def testforwardcmd(self, message):
-        """- тестовая пересылка текущего сообщения"""
-        try:
-            await message.forward_to(await message.get_chat())
-            await utils.answer(message, self.strings("test_forward"))
-        except Exception as e:
-            await utils.answer(message, f"❌ Ошибка: {str(e)}")
-    
-    async def _forward_task(self, task_id):
-        """Выполнение задачи пересылки"""
-        task = self.tasks.get(task_id)
-        if not task or not task["running"]:
-            return
-        
-        chat_id = task["chat_id"]
-        command = task["command"]
-        interval = task["interval"]
-        total_count = task["count"]
-        
-        for i in range(task["completed"], total_count):
-            if not task["running"] or task_id not in self.tasks:
-                break
+            for i in range(count):
+                if not self.is_running:
+                    break
+                
+                # Обновляем прогресс
+                self.current_progress = (i + 1, count)
+                
+                # Пересылаем сообщение
+                await reply_msg.forward_to(chat_id)
+                
+                logger.info(f"Пересылка {i+1}/{count} в чат {chat_id}")
+                
+                # Задержка (кроме последней итерации)
+                if i < count - 1:
+                    await asyncio.sleep(delay)
             
-            try:
-                # Отправляем команду
+            # Завершение
+            if self.is_running:
                 await self.client.send_message(
                     chat_id,
-                    command,
-                    parse_mode=None
+                    self.strings("complete"),
+                    reply_to=message.id if hasattr(message, 'id') else None
                 )
-                
-                # Обновляем счетчик
-                task["completed"] = i + 1
-                self._save_tasks()
-                
-                # Логируем
-                logger.info(
-                    f"Forward task {task_id}: {i+1}/{total_count} "
-                    f"(chat: {chat_id}, command: {command})"
-                )
-                
-                # Ждем указанный интервал
-                if i < total_count - 1:  # Не ждем после последней отправки
-                    await asyncio.sleep(interval)
-                    
-            except Exception as e:
-                logger.error(f"Ошибка в задаче {task_id}: {e}")
-                # Пауза при ошибке
-                await asyncio.sleep(10)
-        
-        # Завершение задачи
-        if task_id in self.tasks:
-            self.tasks[task_id]["running"] = False
-            self._save_tasks()
             
-            if task_id in self.active_tasks:
-                del self.active_tasks[task_id]
-    
-    def _save_tasks(self):
-        """Сохранение задач в базу данных"""
-        if self.config["auto_save"]:
-            self._db.set(__name__, "tasks", self.tasks)
-            self._db.set(__name__, "task_counter", self.task_counter)
-    
-    async def _load_tasks(self):
-        """Загрузка задач из базы данных"""
-        tasks = self._db.get(__name__, "tasks", {})
-        counter = self._db.get(__name__, "task_counter", 0)
-        
-        # Конвертация ключей в int (при загрузке из JSON они становятся str)
-        self.tasks = {int(k): v for k, v in tasks.items()}
-        self.task_counter = counter
+        except asyncio.CancelledError:
+            logger.info("Задача пересылки отменена")
+        except Exception as e:
+            logger.error(f"Ошибка в задаче пересылки: {e}")
+            await self.client.send_message(
+                chat_id,
+                f"❌ <b>Ошибка:</b> {str(e)}",
+                reply_to=message.id if hasattr(message, 'id') else None
+            )
+        finally:
+            self.is_running = False
+            self.task = None
+            self.current_progress = None
     
     async def on_unload(self):
-        """Очистка при выгрузке модуля"""
-        for task_id in list(self.active_tasks.keys()):
-            self.active_tasks[task_id].cancel()
-        self.active_tasks.clear()
+        """При выгрузке модуля"""
+        if self.task:
+            self.task.cancel()
+        self.is_running = False
